@@ -82,14 +82,22 @@ def envia_para_canais(texto: str):
         except Exception as e:
             log.warning("[AVISO] Bot sem permissão em %s: %s", ch["channel_id"], e)
 
-def verifica_win(ultimo, state: GaleState) -> str | None:
-    """
-    Exemplo simples:
-    se sinal pediu BLACK e último é black → WIN
-    se sinal pediu um número específico idem.
-    """
-    # Aqui você coloca a mesma lógica que já possui
-    return None
+def verifica_win(ultimo, state):
+    sinal_cor   = state.estrategia_meta["sinal"]  # black / red / white
+    sinal_tipo  = state.estrategia_meta["tipo"]   # cor / num
+
+    if sinal_tipo == "cor":
+        if ultimo["color"] == sinal_cor:
+            return "WIN"
+        elif ultimo["color"] == "white":
+            return "WHITE"
+        else:
+            return "LOSS"
+    else:                                       # num
+        if ultimo["roll"] == sinal_cor:
+            return "WIN"
+        else:
+            return "LOSS"
 # ---------------------------------------------------------------------
 
 if __name__ == "__main__":
