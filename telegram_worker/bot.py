@@ -1,25 +1,21 @@
-import os
-import asyncio
-import json
-import logging
+import os, asyncio, json, logging
 import aiohttp
 import telebot
 from supabase import create_client
-from telegram_worker.strategy_engine import roll_to_color
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+# ✅ agora importamos as 2 funções utilitárias
+from telegram_worker.strategy_engine import evaluate, roll_to_color
 
-# ────────────────  CONFIGURAÇÃO DE LOG  ────────────────
+# ────────────────  LOG  ────────────────
 logging.basicConfig(
-    level=logging.INFO,                       # ↓ mude para WARNING depois
+    level=logging.INFO,                       # ↓ depois pode voltar para WARNING
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger("bot-worker")
-# ───────────────────────────────────────────────────────
+# ────────────────────────────────────────
 
-
-# Supabase e Bot
+# Supabase + Telegram
 sb  = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_KEY"))
 bot = telebot.TeleBot(os.getenv("TG_BOT_TOKEN"), parse_mode="Markdown")
 
@@ -33,20 +29,28 @@ async def fetch_roll() -> int:
             r.raise_for_status()
             data = await r.json()
             roll = data[0]["roll"]
-            log.info("Roll recebido: %s", roll)                # DEBUG
+            log.info("Roll recebido: %s → cor: %s", roll, roll_to_color(roll))
             return roll
 
 
 async def loop() -> None:
     last = None
+
     while True:
         try:
             roll = await fetch_roll()
+
             if roll != last:
                 last = roll
-                strategies = sb.table("LUK_strategies").select("*").execute().data
+                strategies = (
+                    sb.table("LUK_strategies")
+                      .select("*")
+                      .execute()
+                      .data
+                )
+
                 signals = evaluate(roll, strategies)
-                log.info("Sinais gerados: %s", len(signals))   # DEBUG
+                log.info("Sinais gerados: %d", len(signals))
 
                 for sig in signals:
                     channels = (
@@ -57,7 +61,7 @@ async def loop() -> None:
                           .execute()
                           .data
                     )
-                    log.info("Enviando para %d canais", len(channels))  # DEBUG
+                    log.info("  ↳ enviando para %d canais", len(channels))
 
                     for ch in channels:
                         bot.send_message(ch["channel_id"], sig["text"])
@@ -68,7 +72,7 @@ async def loop() -> None:
                         "raw_payload": json.dumps(sig)
                     }).execute()
 
-        except Exception as e:
+        except Exception:
             log.exception("worker error")      # imprime stack-trace
 
         await asyncio.sleep(1)
