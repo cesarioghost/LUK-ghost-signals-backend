@@ -6,8 +6,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Por segurança, garanta que o TZ esteja correto (opcional)
-ENV TZ=UTC
-
-# Processo principal: bot do Telegram
+# Rode o worker ao subir o container
 CMD ["python", "-m", "telegram_worker.bot"]
