@@ -187,3 +187,4 @@ async def main_loop() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main_loop())
+#testes#
