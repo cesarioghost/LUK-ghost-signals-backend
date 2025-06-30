@@ -7,7 +7,7 @@ bot = telebot.TeleBot(os.getenv("TG_BOT_TOKEN"), parse_mode="Markdown")
 
 async def fetch_roll():
     async with aiohttp.ClientSession() as sess:
-        async with sess.get("https://elmovimento.vip/blaze_double/luk/index.json") as r:
+        async with sess.get("https://elmovimiento.vip/blaze_double/luk/index.json") as r:
             data = await r.json()
             return data[0]["roll"]
 
