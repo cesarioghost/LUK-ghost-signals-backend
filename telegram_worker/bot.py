@@ -5,8 +5,9 @@ import logging
 import aiohttp
 import telebot
 from supabase import create_client
-from telegram_worker.strategy_engine import evaluate
+from telegram_worker.strategy_engine import roll_to_color
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 # ────────────────  CONFIGURAÇÃO DE LOG  ────────────────
 logging.basicConfig(
