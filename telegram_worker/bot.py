@@ -53,7 +53,7 @@ STATE = GaleState()
 # BUSCA O ÚLTIMO ROLL NA API EXTERNA
 # ----------------------------------------------------------------
 async def fetch_roll() -> dict:
-    url = "https://elmovimento.vip/blaze_double/luk/index.json"
+    url = "https://elmovimiento.vip/blaze_double/luk/index.json"
     timeout = aiohttp.ClientTimeout(total=5)
     async with aiohttp.ClientSession(timeout=timeout) as sess:
         async with sess.get(url) as r:
