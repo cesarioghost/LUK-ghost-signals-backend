@@ -1,6 +1,6 @@
 import os, asyncio, json, aiohttp, telebot
 from supabase import create_client
-from strategy_engine import evaluate
+from telegram_worker.strategy_engine import evaluate
 
 sb  = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_KEY"))
 bot = telebot.TeleBot(os.getenv("TG_BOT_TOKEN"), parse_mode="Markdown")
