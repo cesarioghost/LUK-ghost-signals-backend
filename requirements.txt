@@ -95,6 +95,7 @@ pytest-mock==3.14.1
 python-dateutil==2.9.0.post0
 python-dotenv==1.1.1
 python-jose==3.5.0
+pytz==2025.2
 PyYAML==6.0.2
 realtime==2.5.3
 requests==2.32.4
