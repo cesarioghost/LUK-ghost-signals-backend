@@ -1,96 +1,58 @@
 # telegram_worker/bot.py
-import os
-import json
-import asyncio
-import logging
+import os, json, asyncio, logging
 from datetime import datetime, timezone
 
-import aiohttp
-import telebot
+import aiohttp, telebot
 from supabase import create_client
 
 from telegram_worker.strategy_engine import (
-    ROLL_BUFFER,
-    api_color_to_name,
-    evaluate,
-    IMPRESSAO_RECENTE,
+    ROLL_BUFFER, api_color_to_name, evaluate, IMPRESSAO_RECENTE,
 )
+from telegram_worker.state import GaleState
 
-# ────────────────────────────────────────────────────────────────
-# LOGGING
-# ────────────────────────────────────────────────────────────────
+# ------------------ logging ------------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%H:%M:%S",
 )
-log = logging.getLogger("bot-worker")
+log = logging.getLogger("bot")
 
-# ────────────────────────────────────────────────────────────────
-# SUPABASE + TELEGRAM
-# ────────────────────────────────────────────────────────────────
-sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_KEY"))
+# ------------------ supabase + telegram -------
+sb  = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_KEY"))
 bot = telebot.TeleBot(os.getenv("TG_BOT_TOKEN"), parse_mode="Markdown")
 
+STATE = GaleState()                       # controle de gale
 
-# ────────────────────────────────────────────────────────────────
-# PEQUENO FSM PARA CONTROLAR GALES E WIN/LOSS
-# ────────────────────────────────────────────────────────────────
-class GaleState:
-    def __init__(self):
-        self.reset()
-
-    def reset(self):
-        self.gale            = 0            # 0 → 1 → 2
-        self.estrategia      = None         # id
-        self.estrategia_meta = {}           # dict com “sinal” / “gales”
-        self.start_ts        = None         # datetime
-
-
-STATE = GaleState()
-
-# ----------------------------------------------------------------
-# BUSCA O ÚLTIMO ROLL NA API EXTERNA
-# ----------------------------------------------------------------
+# ------------------ fetch roll ----------------
 async def fetch_roll() -> dict:
     url = "https://elmovimiento.vip/blaze_double/luk/index.json"
     timeout = aiohttp.ClientTimeout(total=5)
     async with aiohttp.ClientSession(timeout=timeout) as sess:
         async with sess.get(url) as r:
             r.raise_for_status()
-            data = await r.json()
-            head = data[0]
-            result = {
-                "roll":      head["roll"],
-                "color_id":  head["color"],
-                "color":     api_color_to_name(head["color"]),
-                "timestamp": head["created_at"],
+            head = (await r.json())[0]
+            return {
+                "roll":  head["roll"],
+                "color": api_color_to_name(head["color"]),
+                "ts":    head["created_at"],
             }
-            return result
 
 
-# ----------------------------------------------------------------
-# ENVIA MENSAGEM PARA TELEGRAM (placeholder simples)
-# ----------------------------------------------------------------
-def enviar_telegram(sig: dict) -> None:
-    """Envia o texto do sinal para todos os canais do usuário"""
-    chs = (
-        sb.table("LUK_telegram_channels")
-        .select("channel_id")
-        .eq("user_id", sig["user_id"])
-        .not_.is_("validated_at", None)
-        .execute()
-        .data
-    )
-    for ch in chs:
-        bot.send_message(ch["channel_id"], sig["text"])
+# ------------------ telegram helper ----------
+def enviar_telegram(uid: str, text: str):
+    canais = (sb.table("LUK_telegram_channels")
+                .select("channel_id")
+                .eq("user_id", uid)
+                .not_.is_("validated_at", None)
+                .execute().data)
+    for ch in canais:
+        bot.send_message(ch["channel_id"], text)
 
 
-# ----------------------------------------------------------------
-# VERIFICA SE O HEAD ATUAL FECHA WIN / LOSS / WHITE
-# ----------------------------------------------------------------
-def verifica_win(head: dict, state: GaleState) -> str | None:
-    alvo = state.estrategia_meta.get("sinal")      # red/black/white
+# ------------------ win / gale / loss --------
+def verifica_win(head: dict, st: GaleState) -> str | None:
+    alvo = st.estrategia_meta.get("sinal")        # cor alvo
     if not alvo:
         return None
 
@@ -98,62 +60,55 @@ def verifica_win(head: dict, state: GaleState) -> str | None:
     if cor == alvo:
         return "WIN"
     if cor == "white":
-        return "WHITE"
+        return "BRANCO"
 
-    # — não bateu: avança gale —
-    state.gale += 1
-    if state.gale > state.estrategia_meta.get("gales", 0):
-        return "LOSS"
-    return None
+    # não bateu: tenta gale
+    if st.avanca_gale():
+        return None
+    return "LOSS"
 
 
-# ────────────────────────────────────────────────────────────────
-# LOOP PRINCIPAL
-# ────────────────────────────────────────────────────────────────
-async def main_loop() -> None:
+# ------------------ main loop ----------------
+async def main_loop():
     while True:
         try:
             head = await fetch_roll()
             ROLL_BUFFER.append(head)
 
-            log.info(
-                "bot: Head ➜ roll %2d  cor %s   |  últimos: %s",
-                head["roll"],
-                head["color"],
-                IMPRESSAO_RECENTE(),
-            )
+            log.info("bot: Head ➜ roll %-2d  cor %-5s | %s",
+                     head["roll"], head["color"], IMPRESSAO_RECENTE())
 
-            # 1) procura sinais
+            # --------- gerar sinais ---------
             estrategias = sb.table("LUK_strategies").select("*").execute().data
-            sinais = evaluate(estrategias)
+            for sig in evaluate(estrategias):
+                if STATE.ativa and sig["strategy_id"] == STATE.estrategia:
+                    continue        # já acompanhando este sinal
 
-            if sinais:
-                for sig in sinais:
-                    enviar_telegram(sig)
-                    log.info(
-                        "strategy: Sinal encontrado %s ➜ %s , Estratégia %s",
-                        sig["sequence"],
-                        sig["signal_color"],
-                        sig["name"],
-                    )
-                    STATE.estrategia       = sig["strategy_id"]
-                    STATE.estrategia_meta  = {
-                        "sinal":  sig["signal_color"],
-                        "gales":  2,
-                    }
-                    STATE.gale      = 0
-                    STATE.start_ts  = datetime.now(timezone.utc)
+                enviar_telegram(sig["user_id"], sig["text"])
+                log.info("strategy: Sinal encontrado %s ➜ %s , Estratégia %s",
+                         sig["sequence"], sig["signal_color"], sig["name"])
 
-            # 2) se houver estratégia ativa, verifica resultado
-            if STATE.estrategia:
+                STATE.dispara(sig["strategy_id"],
+                              {"sinal": sig["signal_color"], "gales": 2})
+
+                sb.table("LUK_signals_log").insert({
+                    "strategy_id": sig["strategy_id"],
+                    "result":      "LAUNCHED",
+                    "raw_payload": json.dumps(sig),
+                }).execute()
+
+            # --------- verificar resultado ---
+            if STATE.ativa:
                 res = verifica_win(head, STATE)
-                if res:                       # WIN / LOSS / WHITE
+                if res:
+                    log.info("bot: Resultado %s — resetando", res)
                     sb.table("LUK_signals_log").insert({
                         "strategy_id": STATE.estrategia,
                         "result":      res,
                         "raw_payload": json.dumps(head),
                     }).execute()
-                    log.info("bot: Resultado %s — resetando estado", res)
+
+                    enviar_telegram(os.getenv("TG_OWNER_ID"), f"Resultado: {res}")
                     STATE.reset()
 
         except Exception:
